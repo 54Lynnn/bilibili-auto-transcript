@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Qwen3-ASR 转录辅助脚本 v1.1
-自动检测设备 (CUDA/ROCm/MPS/CPU)，自动选择模型 (1.7B/0.6B)
+Qwen3-ASR 转录辅助脚本 v1.1（保留/可选）
 
-被 bilibili_transcript.sh 第3级降级调用：
-  有独显 → Qwen3-ASR-1.7B
-  无独显 → Qwen3-ASR-0.6B
+注意：当前 bilibili_transcript.sh v5.0 默认使用 Whisper。
+该脚本保留作为 Qwen3-ASR 的可选替代，如需使用需手动修改 shell 脚本调用路径。
+
+自动检测设备 (CUDA/ROCm/MPS/CPU)，自动选择模型 (1.7B/0.6B)
 
 输出格式（写入 --output-file）：
   第一行：转录来源字符串（如 "Qwen3-ASR-1.7B（GPU加速）"）
@@ -78,6 +78,7 @@ def main():
             model_name,
             device_map=device_map,
             torch_dtype="auto",
+            max_new_tokens=2048,
         )
 
         print(f"   ✅ 模型加载完成", file=sys.stderr)

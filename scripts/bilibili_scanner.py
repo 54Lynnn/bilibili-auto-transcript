@@ -72,11 +72,12 @@ def main():
     # 找出新视频
     new_videos = []
     for m in medias:
-        avid = str(m["id"])
-        if avid not in processed:
+        bvid = m.get("bvid", "") or m.get("bv_id", "")
+        if not bvid:
+            continue
+        if bvid not in processed:
             new_videos.append({
-                "avid": avid,
-                "bvid": m.get("bvid", "") or m.get("bv_id", ""),
+                "bvid": bvid,
                 "title": m["title"],
                 "duration": m["duration"],
                 "upper": m["upper"]["name"],

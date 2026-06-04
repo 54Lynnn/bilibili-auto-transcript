@@ -41,9 +41,9 @@ def load_processed():
     return processed
 
 
-def save_processed(avid):
+def save_processed(bvid):
     with open(PROCESSED_FILE, "a") as f:
-        f.write(f"{avid}\n")
+        f.write(f"{bvid}\n")
 
 
 def get_content_hash(filepath):
@@ -106,7 +106,7 @@ def transcribe_video(bvid, attempt=1, max_retries=1):
         if stderr_preview:
             print(f"STDERR: {stderr_preview}")
 
-    used_stt = "🎤" in result.stdout
+    used_stt = "Whisper" in result.stdout or "语音转文字" in result.stdout
 
     if "✅ 转录完成" in result.stdout:
         saved_file = None
@@ -152,7 +152,7 @@ def generate_summary(filepath, api_key=None, api_url=None):
     if api_key:
         try:
             payload = {
-                "model": "gpt-4o-mini",
+                "model": llm_api_model,
                 "messages": [
                     {"role": "system", "content": "你是一个视频摘要助手。请对以下转录文本生成结构化摘要，包含：1) 核心观点 2) 主要论点 3) 关键结论。用中文回复，简洁明了。"},
                     {"role": "user", "content": f"视频标题：{title}\n\n转录文本：\n{transcript_text}"}
@@ -213,6 +213,7 @@ def main():
     # 读取 LLM 配置
     llm_api_key = os.environ.get("OPENAI_API_KEY", "")
     llm_api_url = os.environ.get("SUMMARY_API_URL", "")
+    llm_api_model = os.environ.get("SUMMARY_API_MODEL", "gpt-4o-mini")
     enable_summary = bool(llm_api_key)
 
     if enable_summary:
@@ -240,7 +241,7 @@ def main():
         print(f"   ⏱️  {v['duration']} | 👤 {v['upper']}")
 
         # 带重试的转录
-        # AI 字幕/CC 字幕失败可重试（快速），Qwen3-ASR 失败也直接跳过（模型加载慢）
+        # AI 字幕/CC 字幕失败可重试（快速），Whisper 失败也直接跳过（模型加载慢）
         ok = False
         output_file = None
         transcript_source = None
@@ -252,7 +253,7 @@ def main():
                 output_file = output_path
                 break
             if used_stt:
-                print("   ⏭️ Qwen3-ASR 失败，跳过重试（模型加载耗时）")
+                print("   ⏭️ Whisper 失败，跳过重试（模型加载耗时）")
                 break
             if attempt <= MAX_RETRIES:
                 wait = BATCH_DELAY * attempt

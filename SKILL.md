@@ -1,7 +1,7 @@
 ---
 name: bilibili-auto-transcript
-version: "4.0.0"
-description: "B站视频转录+收藏夹扫描。三级降级（CC→AI→Qwen3-ASR），自动选模型（1.7B GPU / 0.6B CPU），AI摘要生成。"
+version: "5.0.0"
+description: "B站视频转录+收藏夹扫描。三级降级（CC→AI→Whisper），AI摘要生成。"
 homepage: https://clawhub.ai/54lynnn/bilibili-transcript
 metadata:
   {
@@ -14,8 +14,8 @@ metadata:
             {
               "id": "venv",
               "kind": "shell",
-              "command": "cd {{SKILL_DIR}} && python3 -m venv .venv && .venv/bin/pip install qwen-asr requests",
-              "label": "Setup virtual env & install Qwen3-ASR",
+              "command": "cd {{SKILL_DIR}} && python3 -m venv .venv && .venv/bin/pip install openai-whisper requests",
+              "label": "Setup virtual env & install Whisper",
             },
           ],
       },
@@ -38,19 +38,18 @@ bash scripts/bilibili_transcript.sh "https://www.bilibili.com/video/BVxxxxx/"
 **转录优先级（自动降级）：**
 1. ✅ **人工CC字幕**（zh-CN, zh-TW, en, ja 等）→ 100%准确，秒出
 2. ✅ **AI字幕**（ai-zh, ai-en, ai-ja 等9种语言）→ 85-90%准确，秒出
-3. ✅ **Qwen3-ASR 语音转文字**（智能选模型）→ 有独显用 1.7B，无独显用 0.6B
+3. ✅ **OpenAI Whisper 语音转文字**（智能选模型）→ 有独显≥6GB 用 medium，<6GB 用 small；无独显用 base/tiny
 
-**Qwen3-ASR 智能模型选择：**
+**Whisper 智能模型选择：**
 
-| 条件 | 模型 | 中文 CER | 显存需求 |
-|:----:|:----:|:--------:|:-------:|
-| **有 NVIDIA/AMD GPU** | Qwen3-ASR-1.7B | ~3.8% | 4-6 GB |
-| **有 Apple Silicon (M1-M4)** | Qwen3-ASR-1.7B (MLX) | ~3.8% | 3-4 GB |
-| **无独显 (CPU)** | Qwen3-ASR-0.6B | ~5-7% | 2 GB 或不需 |
-| **对比: Whisper medium** | (旧版) | ~12% | 5-6 GB |
+| 条件 | 模型 | 速度参考 |
+|:----:|:----:|:--------:|
+| **有 GPU，显存 ≥6GB** | medium | 高质量，~0.3x 实时 |
+| **有 GPU，显存 <6GB** | small | 平衡，~0.5x 实时 |
+| **无 GPU，视频 ≤30 分钟** | base | 质量与速度平衡 |
+| **无 GPU，视频 >30 分钟** | tiny | 避免等待过久 |
 
-- 自动检测 CUDA / ROCm / Apple MPS / CPU
-- 同一模型权重，自动切换计算后端
+- 自动检测 CUDA / nvidia-smi 获取显存
 - 音频自动转为 16kHz 单声道 WAV（统一格式）
 
 **⚠️ 关键步骤（必须执行）：** 脚本运行后，**AI必须先做这件事**，才能向用户报告完成：
@@ -97,7 +96,7 @@ bash scripts/bilibili_transcript.sh "https://www.bilibili.com/video/BVxxxxx/"
 ```bash
 cd ~/.openclaw/workspace/skills/bilibili-auto-transcript
 python3 -m venv .venv
-.venv/bin/pip install qwen-asr requests
+.venv/bin/pip install openai-whisper requests
 ```
 
 #### 2. 创建收藏夹
@@ -119,7 +118,7 @@ chromium-browser &
 ```bash
 yt-dlp --version    # 必需
 ffmpeg -version     # 必需
-.venv/bin/python3 -c "from qwen_asr import Qwen3ASRModel; print('Qwen3-ASR OK')"  # 必需
+.venv/bin/python3 -c "import whisper; print('Whisper OK')"  # 必需
 opencc --version    # 可选，繁转简
 ```
 
@@ -136,13 +135,14 @@ openclaw cron add \
 ## 公共部分
 
 ### 转录脚本
-`scripts/bilibili_transcript.sh` — 两个模式共享同一个引擎（v4.0）。
-`scripts/qwen3_transcribe.py` — Qwen3-ASR 转录辅助脚本（自动设备检测+模型选择）。
+`scripts/bilibili_transcript.sh` — 两个模式共享同一个引擎（v5.0）。
+`scripts/qwen3_transcribe.py` — （保留）Qwen3-ASR 可选替代，如需使用可手动替换。
 
 ### 依赖
 - `yt-dlp` — 视频下载、字幕获取
 - `ffmpeg` — 音频处理
-- `.venv/bin/python3` — 技能虚拟环境，内含 `qwen-asr`（语音转文字）、`requests`（HTTP请求）
+- `openai-whisper` — 本地语音转文字引擎（通过 `.venv/bin/pip install openai-whisper` 安装）
+- `requests` — HTTP 请求（批量转录用）
 - `opencc` — 繁转简（可选）
 - `chromium-browser` — Cookie 支持（B站AI字幕）
 
@@ -157,7 +157,7 @@ B站视频转录文档
 👤 作者：xxx
 📅 发布时间：xxx
 ⏱️  视频时长：xxx
-📝 转录来源：CC字幕 / B站AI字幕 / Qwen3-ASR-1.7B（GPU加速）/ Qwen3-ASR-0.6B
+📝 转录来源：CC字幕 / B站AI字幕 / Whisper medium（GPU加速）
 ⏰ 转录时间：xxx
 
 ================================================================================
@@ -203,8 +203,8 @@ GET https://api.bilibili.com/x/v3/fav/resource/list?media_id={ID}&ps=20&pn=1
 ### 注意事项
 1. **同文件覆盖** — 同一BV号多次转录覆盖旧文件，已处理列表防重复
 2. **需要Cookie** — 通过 Chromium cookie 获取 AI 字幕，需先B站登录；Cookie快过期时脚本会提示
-3. **Qwen3-ASR 首次运行** — 首次使用时会自动从 HuggingFace 下载模型权重（0.6B ~2GB / 1.7B ~5GB），后续使用无需下载
-4. **Qwen3-ASR 耗时** — GPU模式（1.7B）约实时 0.3x 倍速，CPU模式（0.6B）约实时 0.4x 倍速
+3. **Whisper 首次运行** — 首次使用时自动下载模型权重（tiny ~39MB / base ~74MB / small ~244MB / medium ~769MB），后续使用无需下载
+4. **Whisper 耗时** — GPU模式约实时 0.3x-0.5x 倍速，CPU模式约实时 0.5x-2x 倍速（依模型大小）
 5. **虚拟环境** — 所有 Python 脚本需在 `.venv` 中运行：`.venv/bin/python3 scripts/xxx.py`；`bilibili_transcript.sh` 会自动检测并提示安装
 6. **B站API ps上限20** — 超过需分页
 7. **摘要占位符必须替换** — 设置 `OPENAI_API_KEY` 环境变量可自动生成摘要
