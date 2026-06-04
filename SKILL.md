@@ -52,6 +52,16 @@ bash scripts/bilibili_transcript.sh "https://www.bilibili.com/video/BVxxxxx/"
 - 自动检测 CUDA / nvidia-smi 获取显存
 - 音频自动转为 16kHz 单声道 WAV（统一格式）
 
+### 设计决策：为什么从 Qwen3-ASR 换回 Whisper？
+
+v4.x 引入了 Qwen3-ASR 作为本地转录引擎，v5.0 换回了 Whisper。原因：
+
+1. **安装省心** — `pip install openai-whisper` 一行搞定，模型首次使用时自动下载（tiny ~39MB / medium ~769MB）。Qwen3-ASR 需从 HuggingFace 下载 2-5GB 权重，国内网络经常失败
+2. **生态成熟** — Whisper 社区活跃、持续维护、bug 修复快。Qwen3-ASR 依赖链较深，出问题时排查成本高
+3. **够用即可** — 语音转文字在这个 skill 里是**三级降级的最后一环**（前两级是 CC 和 AI 字幕），大多数视频根本走不到这一步。Whisper 的质量已经完全够用，没必要为了理论上的 CER 提升引入更重的依赖
+4. **模型更轻** — Whisper medium 不到 800MB，Qwen3-ASR 最小 0.6B 也要 2GB。对于兜底场景，轻量是优势
+5. **Qwen3-ASR 保留可选** — 如果你确实需要更高的中文准确率、有足够的硬盘，`scripts/qwen3_transcribe.py` 还在，可手动替换
+
 **⚠️ 关键步骤（必须执行）：** 脚本运行后，**AI必须先做这件事**，才能向用户报告完成：
 
 1. **写摘要** → `read` 输出的 TXT 文件，阅读全文，用 `edit` 替换占位符为结构化摘要

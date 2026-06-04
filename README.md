@@ -13,6 +13,15 @@
 - **AI摘要**（可选）：设置 `OPENAI_API_KEY` 后自动生成结构化视频摘要
 - **目录组织**：按视频发布年月自动分目录存储
 
+## 设计决策
+
+v5.0 从 Qwen3-ASR 换回了 Whisper 作为本地语音转文字引擎。原因：
+
+- **安装省心** — `pip install openai-whisper` 一行搞定，模型自动下载（最大 ~769MB）。Qwen3-ASR 需从 HuggingFace 下载 2-5GB 权重，国内网络经常失败
+- **生态成熟** — Whisper 社区活跃、持续维护，Qwen3-ASR 依赖链深，出问题时排查成本高
+- **够用即可** — 语音转文字是三级降级的最后兜底，大多数视频靠 CC/AI 字幕就够，Whisper 质量完全满足
+- **Qwen3-ASR 保留可选** — `scripts/qwen3_transcribe.py` 还在，需要时可手动替换
+
 ## 快速开始
 
 ```bash
