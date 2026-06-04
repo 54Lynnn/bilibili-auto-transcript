@@ -17,9 +17,10 @@
 
 v5.0 从 Qwen3-ASR 换回了 Whisper 作为本地语音转文字引擎。原因：
 
-- **安装省心** — `pip install openai-whisper` 一行搞定，模型自动下载（最大 ~769MB）。Qwen3-ASR 需从 HuggingFace 下载 2-5GB 权重，国内网络经常失败
-- **生态成熟** — Whisper 社区活跃、持续维护，Qwen3-ASR 依赖链深，出问题时排查成本高
-- **够用即可** — 语音转文字是三级降级的最后兜底，大多数视频靠 CC/AI 字幕就够，Whisper 质量完全满足
+- **架构差异** — Qwen3-ASR 是 **LLM 做语音转文字**，音频整段送进大语言模型推理，慢且吃显存。Whisper 是**纯语音识别模型**，30 秒一段做声学特征识别，不需要 LLM 推理，快得多
+- **资源占用** — Qwen3-ASR-1.7B 需要 4-6GB 显存且推理时间久，Whisper 有更轻量的模型可选（tiny 仅 39MB）
+- **安装省心** — `pip install openai-whisper` 一行搞定，模型自动下载。Qwen3-ASR 需从 HuggingFace 下 2-5GB 权重
+- **够用即可** — 语音转文字是三级降级的最后兜底，为这个场景扛一个 LLM 级别的模型不值当
 - **Qwen3-ASR 保留可选** — `scripts/qwen3_transcribe.py` 还在，需要时可手动替换
 
 ## 快速开始
