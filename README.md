@@ -21,7 +21,6 @@ v5.0 从 Qwen3-ASR 换回了 Whisper 作为本地语音转文字引擎。原因�
 - **资源占用** — Qwen3-ASR-1.7B 需要 4-6GB 显存且推理时间久，Whisper 有更轻量的模型可选（tiny 仅 39MB）
 - **安装省心** — `pip install openai-whisper` 一行搞定，模型自动下载。Qwen3-ASR 需从 HuggingFace 下 2-5GB 权重
 - **够用即可** — 语音转文字是三级降级的最后兜底，为这个场景扛一个 LLM 级别的模型不值当
-- **Qwen3-ASR 保留可选** — `scripts/qwen3_transcribe.py` 还在，需要时可手动替换
 
 ## 快速开始
 
@@ -69,7 +68,8 @@ bilibili-auto-transcript/
 │   ├── generate_summary.py     # AI摘要生成器（三种模式统一调用）
 │   ├── transcript_db.py        # SQLite 数据库管理层
 │   ├── fill_summaries.py       # 批量补摘要（cronjob推荐）
-│   ├── qwen3_transcribe.py     # （保留）Qwen3-ASR 可选替代
+│   ├── migrate_to_db.py        # 旧TXT迁移到数据库
+│   ├── logger.py               # 共享日志模块
 │   └── batch_transcribe.py     # 批量转录调度
 └── references/
     ├── architecture.md         # 架构说明

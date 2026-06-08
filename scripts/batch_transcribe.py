@@ -27,6 +27,7 @@ except Exception:
     pass
 
 from transcript_db import TranscriptDB
+from logger import log, info, success, warn, error as log_error
 SCANNER = os.path.join(SKILL_DIR, "scripts", "bilibili_scanner.py")
 TRANSCRIPT_SH = os.path.join(SKILL_DIR, "scripts", "bilibili_transcript.sh")
 STATE_DIR = os.path.expanduser("~/.openclaw/workspace/.auto-transcript-state")
@@ -113,19 +114,15 @@ def transcribe_video(bvid, attempt=1, max_retries=1):
         for line in result.stdout.splitlines():
             if line.strip().endswith(".txt") and "/" in line:
                 saved_file = line.strip()
-        # 从DB读取转录来源（shell脚本已写入DB）
+        # 从DB读取转录来源（直接用已知bvid，无需从文件名二次提取）
         transcript_source = "unknown"
-        if saved_file:
-            try:
-                import re
-                bvid_match = re.search(r'BV[a-zA-Z0-9]+', saved_file)
-                if bvid_match:
-                    with TranscriptDB() as db:
-                        record = db.get_by_bvid(bvid_match.group(0))
-                        if record:
-                            transcript_source = record.get("transcript_source", "unknown")
-            except Exception:
-                pass
+        try:
+            with TranscriptDB() as db:
+                record = db.get_by_bvid(bvid)
+                if record:
+                    transcript_source = record.get("transcript_source", "unknown")
+        except Exception:
+            pass
         return True, saved_file or "unknown", transcript_source, used_stt
     else:
         error_msg = result.stdout[-300:] if result.stdout else "无输出"
@@ -136,10 +133,12 @@ def main():
     print("=" * 70)
     print("📼 B站收藏夹批量转录 v2.0")
     print("=" * 70)
+    info("batch_transcribe", "开始批量转录任务")
 
     videos = scan_videos()
     if not videos:
         print("没有新视频需要转录")
+        info("batch_transcribe", "没有新视频，结束")
         return 0
 
     processed = load_processed()
@@ -171,8 +170,8 @@ def main():
         current_remaining = remaining - i + 1
 
         elapsed = time.time() - start_time if i > 1 else 0
-        if elapsed > 0 and success_count > 0:
-            avg_time = elapsed / (success_count)
+        if elapsed > 0 and (i - 1) > 0:
+            avg_time = elapsed / (i - 1)  # 分母用已处理数（含失败），更准确
             eta = avg_time * current_remaining
             print(f"\n⏱️  已用: {int(elapsed//60)}分{int(elapsed%60)}秒"
                   f" | 预计剩余: {int(eta//60)}分{int(eta%60)}秒")
@@ -219,6 +218,7 @@ def main():
             success_count += 1
             save_processed(bvid)
             print(f"   ✅ [{success_count}/{remaining}] 成功! 来源: {transcript_source}")
+            success("batch_transcribe", f"转录成功: {bvid} ({transcript_source})")
             # 注：shell脚本已自动完成 DB写入 + 摘要生成 + TXT渲染，此处无需重复操作
 
         else:
@@ -236,6 +236,7 @@ def main():
 
             fail_count += 1
             print(f"   ❌ [{fail_count}] 失败 (尝试{attempt}次后放弃)")
+            log_error("batch_transcribe", f"转录失败: {bvid} (尝试{attempt}次)")
 
         # 视频间延迟（避免触发 B站风控）
         if i < len(pending):
@@ -250,6 +251,7 @@ def main():
     print(f"   成功: {success_count} 个 ✅")
     print(f"   失败: {fail_count} 个 {'❌' if fail_count else '✅'}")
     print(f"   耗时: {int(total_time//60)}分{int(total_time%60)}秒")
+    info("batch_transcribe", f"批量转录完成: 成功 {success_count}, 失败 {fail_count}, 耗时 {int(total_time//60)}分{int(total_time%60)}秒")
 
     if report_rows:
         with open(REPORT_FILE, "w", newline="", encoding="utf-8") as f:

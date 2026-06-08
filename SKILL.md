@@ -60,13 +60,10 @@ v4.x 引入了 Qwen3-ASR 作为本地转录引擎，v5.0 换回了 Whisper。核
 2. **资源占用** — Qwen3-ASR-1.7B 需要 4-6GB 显存且推理时间长（LLM 的 O(n²) attention），Whisper medium 虽然也要 ~5GB 显存但处理方式轻量，且有更小的模型可选（tiny 仅 ~39MB）
 3. **安装省心** — `pip install openai-whisper` 一行搞定，模型首次使用时自动下载。Qwen3-ASR 需从 HuggingFace 下载 2-5GB 权重，国内网络经常失败
 4. **够用即可** — 语音转文字在这个 skill 里是**三级降级的最后一环**，大多数视频走 CC 或 AI 字幕就完了。为这个兜底场景扛一个 LLM 级别的模型，不值当
-5. **Qwen3-ASR 保留可选** — 如果你确实需要更高的中文准确率（LLM 上下文理解加成）、有足够的 GPU 显存，`scripts/qwen3_transcribe.py` 还在，可手动替换
 
-**⚠️ 关于摘要：** 设置了 `OPENAI_API_KEY` 时，转录完成后脚本会自动调用 `generate_summary.py` 生成 AI 摘要，无需手动操作。未设置 API key 时 TXT 中保留占位符，可后续运行 `fill_summaries.py` 批量补全。
+**⚠️ 关于摘要：** 设置了 `OPENAI_API_KEY` 时，转录完成后脚本会自动调用 `generate_summary.py` 生成 AI 摘要。未设置 API key 时 TXT 中保留占位符，可后续运行 `fill_summaries.py` 批量补全。
 
 转录只负责出文件，索引那是 knowledge-rag 自己的事。
-
-**AI摘要**（有API key时自动触发）：转录完成后自动调用 `scripts/generate_summary.py` 生成结构化摘要，替换TXT中的占位符。无需手动操作。
 
 ---
 
@@ -138,12 +135,12 @@ ffmpeg -version     # 必需
 opencc --version    # 可选，繁转简
 ```
 
-#### 7. 配置定时任务（推荐每6小时）
+#### 7. 配置定时任务（推荐每6小时扫描，有新内容则转录）
 ```bash
 openclaw cron add \
-  --name bilibili-scan \
+  --name bilibili-auto-transcribe \
   --every 21600000 \
-  --message "运行扫描脚本：cd ~/.openclaw/workspace/skills/bilibili-auto-transcript && .venv/bin/python3 scripts/bilibili_scanner.py"
+  --message "先用扫描脚本快速检查：cd ~/.openclaw/workspace/skills/bilibili-auto-transcript/scripts && .venv/bin/python3 bilibili_scanner.py。如果有新视频（NEW_ITEMS不为0），再用转录脚本：.venv/bin/python3 batch_transcribe.py。如果没新视频，直接说'无新内容'。如果有转完的视频，汇报成功/失败数量和标题。"
 ```
 
 #### 8. 补全遗漏摘要（推荐每12小时）
@@ -164,7 +161,7 @@ openclaw cron add \
 `scripts/generate_summary.py` — AI摘要生成器，三种模式统一调用（转录完自动触发）。
 `scripts/transcript_db.py` — SQLite 数据库管理层（建表、写入、查询、更新摘要）。
 `scripts/fill_summaries.py` — 批量补摘要：扫描数据库中摘要为空的条目，逐个调API填充。适合 cronjob 定时运行。
-`scripts/qwen3_transcribe.py` — （保留）Qwen3-ASR 可选替代，如需使用可手动替换。
+`scripts/logger.py` — 共享日志模块，所有脚本关键操作写入 `~/.openclaw/workspace/.auto-transcript-state/logs/`。
 
 ### 依赖
 - `yt-dlp` — 视频下载、字幕获取

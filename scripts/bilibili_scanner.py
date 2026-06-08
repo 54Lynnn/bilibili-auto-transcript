@@ -22,7 +22,7 @@ except Exception:
 
 import requests
 
-FAV_MEDIA_ID = os.environ.get("FAV_MEDIA_ID", "3972051046")  # 从 .env 或环境变量读取，有默认值
+FAV_MEDIA_ID = os.environ.get("FAV_MEDIA_ID", "")  # 从 .env 或环境变量读取，必须配置
 STATE_DIR = os.path.expanduser("~/.openclaw/workspace/.auto-transcript-state")
 PROCESSED_FILE = os.path.join(STATE_DIR, "processed_videos.txt")
 API_BASE = "https://api.bilibili.com/x/v3/fav/resource/list"

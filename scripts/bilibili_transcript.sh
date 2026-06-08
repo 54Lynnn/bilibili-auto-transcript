@@ -10,6 +10,18 @@ mkdir -p "$OUTPUT_DIR"
 BROWSER_TYPE="${3:-chromium}"
 
 CLEANUP_DIR="$OUTPUT_DIR"
+LOG_DIR="$HOME/.openclaw/workspace/.auto-transcript-state/logs"
+LOG_FILE="$LOG_DIR/transcript.log"
+mkdir -p "$LOG_DIR"
+
+shell_log() {
+    local level="${1:-INFO}"
+    local message="$2"
+    local ts
+    ts=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$ts] [$level] [bilibili_transcript.sh] $message" >> "$LOG_FILE"
+}
+
 cleanup_temp() {
     rm -f "$CLEANUP_DIR"/bilibili_subtitle*.srt "$CLEANUP_DIR"/bilibili_ai_subtitle*.srt \
           "$CLEANUP_DIR"/bilibili_audio*.mp3 "$CLEANUP_DIR"/bilibili_audio*.m4a \
@@ -29,6 +41,7 @@ echo "🔍 正在获取视频信息..."
 echo "🔍 检测浏览器Cookie..."
 
 COOKIE_ARGS=()
+DETECTED_COOKIE_PATH=""
 
 detect_cookie() {
     local browser="$1"
@@ -40,6 +53,7 @@ detect_cookie() {
         if echo "$test_out" | grep -q "Extracting"; then
             echo "   ✅ 使用 $label Cookie"
             COOKIE_ARGS=(--cookies-from-browser "$browser:$path")
+            DETECTED_COOKIE_PATH="$path/Default/Cookies"
             return 0
         fi
     fi
@@ -78,8 +92,13 @@ if [ ${#COOKIE_ARGS[@]} -eq 0 ]; then
     echo "   ⚠️ 无可用Cookie，B站AI字幕可能无法获取"
     echo "   💡 请先用 chromium-browser 登录 bilibili.com"
 else
+    if [ -n "$DETECTED_COOKIE_PATH" ] && [ -f "$DETECTED_COOKIE_PATH" ]; then
+    COOKIE_AGE=$(ls -lu "$DETECTED_COOKIE_PATH" 2>/dev/null | awk '{print $6, $7}')
+    echo "   ℹ️  Cookie最后使用: $COOKIE_AGE（约30天过期）"
+else
     COOKIE_AGE=$(ls -lu "$HOME/snap/chromium/common/chromium/Default/Cookies" 2>/dev/null | awk '{print $6, $7}')
     echo "   ℹ️  Cookie最后使用: $COOKIE_AGE（约30天过期）"
+fi
 fi
 echo ""
 
@@ -111,6 +130,7 @@ echo "📹 视频: $TITLE"
 echo "👤 作者: $AUTHOR"
 echo "📅 发布: $UPLOAD_DATE_FORMATTED"
 echo "⏱️  时长: $DURATION"
+shell_log "INFO" "开始转录: $VIDEO_URL | $TITLE | $AUTHOR"
 
 # ===== 检查字幕 =====
 echo ""
@@ -149,7 +169,8 @@ if [ "$HAS_CC_SUBS" = true ]; then
     if [ -n "$SUB_FILE" ] && [ -s "$SUB_FILE" ]; then
         echo "✅ CC字幕下载成功"
         TRANSCRIPT_SOURCE="B站CC字幕"
-        TRANSCRIPT_TEXT=$(sed '/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/d' "$SUB_FILE" | sed '/^[0-9]*$/d' | sed '/^$/d')
+        shell_log "SUCCESS" "使用CC字幕 ($CC_SUB_LANG)"
+        TRANSCRIPT_TEXT=$(sed '/^[0-9]\{1,\}:[0-9][0-9]:[0-9][0-9]/d' "$SUB_FILE" | sed '/^[0-9]*$/d' | sed '/^$/d')
     else
         echo "⚠️  CC字幕下载失败..."
         HAS_CC_SUBS=false
@@ -168,7 +189,8 @@ if [ -z "$TRANSCRIPT_TEXT" ] && [ "$HAS_AI_SUBS" = true ]; then
     if [ -n "$SUB_FILE" ] && [ -s "$SUB_FILE" ]; then
         echo "✅ AI字幕下载成功"
         TRANSCRIPT_SOURCE="B站AI字幕 ($AI_LANG)"
-        TRANSCRIPT_TEXT=$(sed '/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/d' "$SUB_FILE" | sed '/^[0-9]*$/d' | sed '/^$/d')
+        shell_log "SUCCESS" "使用AI字幕 ($AI_LANG)"
+        TRANSCRIPT_TEXT=$(sed '/^[0-9]\{1,\}:[0-9][0-9]:[0-9][0-9]/d' "$SUB_FILE" | sed '/^[0-9]*$/d' | sed '/^$/d')
     else
         echo "⚠️  AI字幕下载失败..."
         HAS_AI_SUBS=false
@@ -185,7 +207,8 @@ if [ -z "$TRANSCRIPT_TEXT" ]; then
         if [ -n "$SUB_FILE" ] && [ -s "$SUB_FILE" ]; then
             echo "✅ 兜底成功！AI字幕已下载（$try_lang）"
             TRANSCRIPT_SOURCE="B站AI字幕 ($try_lang)"
-            TRANSCRIPT_TEXT=$(sed '/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/d' "$SUB_FILE" | sed '/^[0-9]*$/d' | sed '/^$/d')
+            shell_log "SUCCESS" "兜底AI字幕 ($try_lang)"
+            TRANSCRIPT_TEXT=$(sed '/^[0-9]\{1,\}:[0-9][0-9]:[0-9][0-9]/d' "$SUB_FILE" | sed '/^[0-9]*$/d' | sed '/^$/d')
             break
         fi
     done
@@ -296,6 +319,7 @@ if [ -z "$TRANSCRIPT_TEXT" ]; then
         if [ "$HAS_CUDA" = true ]; then
             TRANSCRIPT_SOURCE="$TRANSCRIPT_SOURCE（GPU加速）"
         fi
+        shell_log "SUCCESS" "使用Whisper $WHISPER_MODEL 转录完成"
         TRANSCRIPT_TEXT=$(cat "$TXT_FILE")
         rm -f "$TXT_FILE"
     else
@@ -358,6 +382,7 @@ with TranscriptDB() as db:
     )
     print('📝 已写入数据库')
 " <<< "$TRANSCRIPT_TEXT_SIMPLIFIED" 2>&1
+    shell_log "INFO" "已写入数据库: $BVID"
     rm -f "$META_JSON"
 fi
 
@@ -365,11 +390,13 @@ fi
 if [ -n "$OPENAI_API_KEY" ] || [ -f "$SCRIPT_DIR/../.env" ]; then
     echo ""
     echo "🤖 正在生成AI摘要..."
-    if [ -f "$SCRIPT_DIR/../.env" ]; then
+    # 仅在未设置API key时才从.env加载（尊重已存在的环境变量）
+    if [ -z "$OPENAI_API_KEY" ] && [ -f "$SCRIPT_DIR/../.env" ]; then
         set -a; . "$SCRIPT_DIR/../.env" 2>/dev/null || true; set +a
     fi
     if [ -n "$BVID" ]; then
         "$PY_BIN" "$SCRIPT_DIR/generate_summary.py" --bvid "$BVID" 2>&1
+        shell_log "INFO" "AI摘要已触发: $BVID"
     fi
 fi
 
@@ -387,6 +414,7 @@ fi
 
 echo ""
 echo "✅ 转录完成！"
+shell_log "SUCCESS" "转录流程完成: $BVID ($TRANSCRIPT_SOURCE)"
 if [ -n "$OUTPUT_FILE" ]; then
     echo "📄 文件已保存: $OUTPUT_FILE"
     echo "$OUTPUT_FILE"

@@ -30,6 +30,7 @@ except ImportError:
     sys.exit(1)
 
 from transcript_db import TranscriptDB
+from logger import log, success, warn, error as log_error
 
 
 def call_llm_api(title, transcript_text, api_key, api_url, api_model):
@@ -79,6 +80,7 @@ def generate_summary_by_bvid(bvid, api_key=None, api_url=None, api_model=None):
     api_model = api_model or config["api_model"]
 
     if not api_key:
+        log("generate_summary", f"跳过 {bvid}: 未设置 OPENAI_API_KEY")
         return False, None
 
     with TranscriptDB() as db:
@@ -88,21 +90,29 @@ def generate_summary_by_bvid(bvid, api_key=None, api_url=None, api_model=None):
 
         # 已有摘要则跳过
         if record.get("summary"):
+            log("generate_summary", f"{bvid} 已有摘要，跳过")
             return True, record["summary"]
 
         title = record.get("title", "")
         transcript_text = record.get("transcript_text", "")
         if not transcript_text:
+            log("generate_summary", f"{bvid} 无转录全文，跳过")
             return False, None
 
         try:
+            log("generate_summary", f"开始生成摘要: {bvid} - {title[:30]}")
             summary = call_llm_api(title, transcript_text, api_key, api_url, api_model)
             # 更新DB
             db.update_summary(bvid, summary.strip())
-            # 重新渲染TXT
-            db.render_txt(bvid)
+            # 重新渲染TXT（失败不阻塞：DB已有摘要，下次截断会修复）
+            try:
+                db.render_txt(bvid)
+            except Exception as e:
+                log_error("generate_summary", f"{bvid} 摘要已入库但TXT渲染失败: {e}")
+            success("generate_summary", f"摘要生成成功: {bvid}")
             return True, summary
         except Exception as e:
+            log_error("generate_summary", f"{bvid} 摘要生成失败: {e}")
             print(f"   ⚠️ LLM摘要生成失败: {e}", file=sys.stderr)
             return False, None
 
