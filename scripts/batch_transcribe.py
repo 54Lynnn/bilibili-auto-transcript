@@ -12,14 +12,21 @@
 """
 import csv
 import hashlib
+import json
 import os
 import subprocess
 import sys
 import time
 
-import requests
-
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(SKILL_DIR, ".env"))
+except Exception:
+    pass
+
+from transcript_db import TranscriptDB
 SCANNER = os.path.join(SKILL_DIR, "scripts", "bilibili_scanner.py")
 TRANSCRIPT_SH = os.path.join(SKILL_DIR, "scripts", "bilibili_transcript.sh")
 STATE_DIR = os.path.expanduser("~/.openclaw/workspace/.auto-transcript-state")
@@ -62,29 +69,22 @@ def scan_videos():
     result = subprocess.run(
         [sys.executable, SCANNER], capture_output=True, text=True, cwd=SKILL_DIR
     )
-    print(result.stdout)
     if result.returncode != 0:
         print(f"Scanner error: {result.stderr}")
         return []
 
-    videos = []
-    current = None
-    for line in result.stdout.splitlines():
-        if line.startswith("  - BVID:"):
-            if current:
-                videos.append(current)
-            current = {"bvid": line.split("BVID:", 1)[1].strip()}
-        elif line.startswith("    TITLE:") and current:
-            current["title"] = line.split("TITLE:", 1)[1].strip()
-        elif line.startswith("    DURATION:") and current:
-            current["duration"] = line.split("DURATION:", 1)[1].strip()
-        elif line.startswith("    UPPER:") and current:
-            current["upper"] = line.split("UPPER:", 1)[1].strip()
-        elif line.startswith("    PUBTIME:") and current:
-            current["pubtime"] = line.split("PUBTIME:", 1)[1].strip()
-    if current:
-        videos.append(current)
-    return videos
+    try:
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        print(f"Scanner 输出解析失败: {result.stdout[:200]}")
+        return []
+
+    if data.get("error"):
+        print(f"Scanner 错误: {data['error']}")
+        return []
+
+    print(f"📊 收藏夹共 {data.get('collection_total', 0)} 个，已处理 {data.get('processed', 0)} 个")
+    return data.get("new_videos", [])
 
 
 def transcribe_video(bvid, attempt=1, max_retries=1):
@@ -113,78 +113,23 @@ def transcribe_video(bvid, attempt=1, max_retries=1):
         for line in result.stdout.splitlines():
             if line.strip().endswith(".txt") and "/" in line:
                 saved_file = line.strip()
-        transcript_source = None
-        for line in result.stdout.splitlines():
-            if "转录来源" in line:
-                transcript_source = line.replace("📝 转录来源：", "").strip()
-                break
-        return True, saved_file or "unknown", transcript_source or "unknown", used_stt
+        # 从DB读取转录来源（shell脚本已写入DB）
+        transcript_source = "unknown"
+        if saved_file:
+            try:
+                import re
+                bvid_match = re.search(r'BV[a-zA-Z0-9]+', saved_file)
+                if bvid_match:
+                    with TranscriptDB() as db:
+                        record = db.get_by_bvid(bvid_match.group(0))
+                        if record:
+                            transcript_source = record.get("transcript_source", "unknown")
+            except Exception:
+                pass
+        return True, saved_file or "unknown", transcript_source, used_stt
     else:
         error_msg = result.stdout[-300:] if result.stdout else "无输出"
         return False, error_msg, None, used_stt
-
-
-def generate_summary(filepath, api_key=None, api_url=None):
-    if not os.path.exists(filepath):
-        return False
-
-    with open(filepath, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    if "【AI待处理" not in content:
-        return False
-
-    title = ""
-    for line in content.splitlines():
-        if "视频标题：" in line:
-            title = line.split("视频标题：", 1)[1].strip()
-            break
-
-    text_start = content.find("第二部分：完整原文")
-    if text_start == -1:
-        return False
-
-    transcript_text = content[text_start:].strip()
-    transcript_text = transcript_text[:30000]
-
-    summary = None
-
-    if api_key:
-        try:
-            payload = {
-                "model": llm_api_model,
-                "messages": [
-                    {"role": "system", "content": "你是一个视频摘要助手。请对以下转录文本生成结构化摘要，包含：1) 核心观点 2) 主要论点 3) 关键结论。用中文回复，简洁明了。"},
-                    {"role": "user", "content": f"视频标题：{title}\n\n转录文本：\n{transcript_text}"}
-                ],
-                "max_tokens": 1024
-            }
-            resp = requests.post(
-                api_url or "https://api.openai.com/v1/chat/completions",
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}"
-                },
-                timeout=60
-            )
-            resp_data = resp.json()
-            summary = resp_data["choices"][0]["message"]["content"]
-
-        except Exception as e:
-            print(f"   ⚠️ LLM摘要生成失败: {e}")
-
-    if summary:
-        new_content = content.replace(
-            "【AI待处理：请阅读全文后，替换此行，写结构化摘要】",
-            summary.strip()
-        )
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        print(f"   ✅ AI摘要已写入")
-        return True
-
-    return False
 
 
 def main():
@@ -210,16 +155,11 @@ def main():
         print("🎉 全部视频已转录完成！")
         return 0
 
-    # 读取 LLM 配置
-    llm_api_key = os.environ.get("OPENAI_API_KEY", "")
-    llm_api_url = os.environ.get("SUMMARY_API_URL", "")
-    llm_api_model = os.environ.get("SUMMARY_API_MODEL", "gpt-4o-mini")
-    enable_summary = bool(llm_api_key)
-
-    if enable_summary:
-        print(f"📝 AI摘要生成: 已启用")
+    # 显示摘要状态（摘要由shell脚本自动生成）
+    if os.environ.get("OPENAI_API_KEY"):
+        print(f"📝 AI摘要生成: 已启用（转录时自动生成）")
     else:
-        print(f"📝 AI摘要生成: 未启用（设置 OPENAI_API_KEY 环境变量可开启）")
+        print(f"📝 AI摘要生成: 未启用（设置 OPENAI_API_KEY 可开启）")
 
     start_time = time.time()
     success_count = 0
@@ -266,9 +206,9 @@ def main():
 
             report_rows.append({
                 "bvid": bvid,
-                "title": v["title"],
-                "author": v["upper"],
-                "duration": v["duration"],
+                "title": v.get("title", ""),
+                "author": v.get("upper", ""),
+                "duration": v.get("duration", ""),
                 "source": transcript_source or "unknown",
                 "output_file": output_file,
                 "content_hash": content_hash,
@@ -279,20 +219,14 @@ def main():
             success_count += 1
             save_processed(bvid)
             print(f"   ✅ [{success_count}/{remaining}] 成功! 来源: {transcript_source}")
-
-            # AI摘要生成
-            if enable_summary and output_file and output_file != "unknown":
-                try:
-                    generate_summary(output_file, llm_api_key, llm_api_url)
-                except Exception as e:
-                    print(f"   ⚠️ 摘要生成异常: {e}")
+            # 注：shell脚本已自动完成 DB写入 + 摘要生成 + TXT渲染，此处无需重复操作
 
         else:
             report_rows.append({
                 "bvid": bvid,
-                "title": v["title"],
-                "author": v["upper"],
-                "duration": v["duration"],
+                "title": v.get("title", ""),
+                "author": v.get("upper", ""),
+                "duration": v.get("duration", ""),
                 "source": "失败",
                 "output_file": "",
                 "content_hash": "",

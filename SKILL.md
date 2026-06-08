@@ -14,7 +14,7 @@ metadata:
             {
               "id": "venv",
               "kind": "shell",
-              "command": "cd {{SKILL_DIR}} && python3 -m venv .venv && .venv/bin/pip install openai-whisper requests",
+              "command": "cd {{SKILL_DIR}} && python3 -m venv .venv && .venv/bin/pip install openai-whisper requests python-dotenv",
               "label": "Setup virtual env & install Whisper",
             },
           ],
@@ -62,11 +62,11 @@ v4.x 引入了 Qwen3-ASR 作为本地转录引擎，v5.0 换回了 Whisper。核
 4. **够用即可** — 语音转文字在这个 skill 里是**三级降级的最后一环**，大多数视频走 CC 或 AI 字幕就完了。为这个兜底场景扛一个 LLM 级别的模型，不值当
 5. **Qwen3-ASR 保留可选** — 如果你确实需要更高的中文准确率（LLM 上下文理解加成）、有足够的 GPU 显存，`scripts/qwen3_transcribe.py` 还在，可手动替换
 
-**⚠️ 关键步骤（必须执行）：** 脚本运行后，**AI必须先做这件事**，才能向用户报告完成：
-
-1. **写摘要** → `read` 输出的 TXT 文件，阅读全文，用 `edit` 替换占位符为结构化摘要
+**⚠️ 关于摘要：** 设置了 `OPENAI_API_KEY` 时，转录完成后脚本会自动调用 `generate_summary.py` 生成 AI 摘要，无需手动操作。未设置 API key 时 TXT 中保留占位符，可后续运行 `fill_summaries.py` 批量补全。
 
 转录只负责出文件，索引那是 knowledge-rag 自己的事。
+
+**AI摘要**（有API key时自动触发）：转录完成后自动调用 `scripts/generate_summary.py` 生成结构化摘要，替换TXT中的占位符。无需手动操作。
 
 ---
 
@@ -81,7 +81,7 @@ v4.x 引入了 Qwen3-ASR 作为本地转录引擎，v5.0 换回了 Whisper。核
   → 发现新视频 → 转录（三级降级）
   → （可选）AI读全文、写结构化摘要
   → 覆盖TXT中的摘要占位符
-  → 记录avid到已处理列表
+  → 记录bvid到已处理列表
   → 生成转录报告CSV
   → 通知用户（标题/作者/时长/转录来源/摘要/TXT文件）
 ```
@@ -96,7 +96,7 @@ v4.x 引入了 Qwen3-ASR 作为本地转录引擎，v5.0 换回了 Whisper。核
 - **断点续传** — 中断后重跑自动跳过已处理视频
 - **自动重试** — 失败任务自动重试2次
 - **转录报告** — 生成 CSV 报告，含来源分布统计
-- **AI摘要** — 可选，设置环境变量 `OPENAI_API_KEY` 即可自动生成摘要
+- **AI摘要** — 有 API key 时自动生成（三种模式统一调用 `scripts/generate_summary.py`）
 - **目录组织** — 按视频发布年月自动分目录存储
 
 ### 首次设置
@@ -106,7 +106,7 @@ v4.x 引入了 Qwen3-ASR 作为本地转录引擎，v5.0 换回了 Whisper。核
 ```bash
 cd ~/.openclaw/workspace/skills/bilibili-auto-transcript
 python3 -m venv .venv
-.venv/bin/pip install openai-whisper requests
+.venv/bin/pip install openai-whisper requests python-dotenv
 ```
 
 #### 2. 创建收藏夹
@@ -115,8 +115,14 @@ B站新建一个收藏夹，设为**公开**。
 #### 3. 获取收藏夹ID
 URL 中 `fid=` 后面的数字。
 
-#### 4. 修改扫描脚本
-编辑 `scripts/bilibili_scanner.py`，改 `FAV_MEDIA_ID` 为你的收藏夹ID。
+#### 4. 配置 AI 摘要（可选）
+```bash
+cd ~/.openclaw/workspace/skills/bilibili-auto-transcript
+cp .env.example .env
+# 编辑 .env，填入你的 API Key
+```
+支持任何 OpenAI 兼容 API（DeepSeek、OpenCode Go、OpenRouter 等），详见 `.env.example`。
+编辑 `.env`，设置 `FAV_MEDIA_ID` 为你的收藏夹ID。
 
 #### 5. Chromium 登录B站（获取Cookie）
 ```bash
@@ -140,12 +146,24 @@ openclaw cron add \
   --message "运行扫描脚本：cd ~/.openclaw/workspace/skills/bilibili-auto-transcript && .venv/bin/python3 scripts/bilibili_scanner.py"
 ```
 
+#### 8. 补全遗漏摘要（推荐每12小时）
+```bash
+openclaw cron add \
+  --name bilibili-fill-summaries \
+  --every 43200000 \
+  --message "cd ~/.openclaw/workspace/skills/bilibili-auto-transcript && .venv/bin/python3 scripts/fill_summaries.py"
+```
+确保所有转录视频都有AI摘要。即使即时转录时API调用失败，也会被自动补上。
+
 ---
 
 ## 公共部分
 
 ### 转录脚本
-`scripts/bilibili_transcript.sh` — 两个模式共享同一个引擎（v5.0）。
+`scripts/bilibili_transcript.sh` — 两个模式共享同一个引擎（v5.0）。转录完自动写入 SQLite 数据库。
+`scripts/generate_summary.py` — AI摘要生成器，三种模式统一调用（转录完自动触发）。
+`scripts/transcript_db.py` — SQLite 数据库管理层（建表、写入、查询、更新摘要）。
+`scripts/fill_summaries.py` — 批量补摘要：扫描数据库中摘要为空的条目，逐个调API填充。适合 cronjob 定时运行。
 `scripts/qwen3_transcribe.py` — （保留）Qwen3-ASR 可选替代，如需使用可手动替换。
 
 ### 依赖
@@ -153,6 +171,7 @@ openclaw cron add \
 - `ffmpeg` — 音频处理
 - `openai-whisper` — 本地语音转文字引擎（通过 `.venv/bin/pip install openai-whisper` 安装）
 - `requests` — HTTP 请求（批量转录用）
+- `python-dotenv` — 加载 `.env` 文件（通过 `.venv/bin/pip install python-dotenv` 安装）
 - `opencc` — 繁转简（可选）
 - `chromium-browser` — Cookie 支持（B站AI字幕）
 
@@ -194,10 +213,13 @@ B站视频转录文档
 |------|--------|------|
 | 收藏夹ID | （需设置） | URL `fid=` 的数字 |
 | 输出目录 | `~/workspace/knowledge/bilibili/` | TXT存放路径，自动按年/月分子目录 |
-| 已处理记录 | `~/.openclaw/workspace/.auto-transcript-state/processed_videos.txt` | 去重文件（每行一个avid） |
+| 已处理记录 | `~/.openclaw/workspace/.auto-transcript-state/processed_videos.txt` | 去重文件（每行一个bvid） |
+| 转录数据库 | `bilibili-auto-transcript/.db/transcripts.db` | SQLite 数据库（bvid、标题、作者、转录来源、摘要等） |
 | 转录报告 | `~/.openclaw/workspace/.auto-transcript-state/transcript_report.csv` | 每次批量转录的详细报告 |
 | 扫描间隔 | 每6小时 | 自动模式定时 |
-| OPENAI_API_KEY | （可选） | 设置后自动生成AI摘要 |
+| OPENAI_API_KEY | （可选） | 设置后自动生成AI摘要，支持 `.env` 文件 |
+| SUMMARY_API_URL | `https://api.openai.com/v1/chat/completions` | API地址，支持任何 OpenAI 兼容 API |
+| SUMMARY_API_MODEL | `gpt-4o-mini` | 模型名，如 `deepseek-v4-flash`、`gpt-4o-mini` 等 |
 
 ### B站收藏夹API
 ```
@@ -206,9 +228,9 @@ GET https://api.bilibili.com/x/v3/fav/resource/list?media_id={ID}&ps=20&pn=1
 - `ps` 最大20（脚本已设 ps=20）
 - 公开收藏夹无需Cookie
 
-### avid vs bvid
-- `id` = avid（数字）→ 去重追踪用
-- `bvid` / `bv_id` = BV号 → 构建转录URL用
+### bvid
+- `bvid` / `bv_id` = BV号 → 构建转录URL、去重追踪用
+- `id` = avid（数字）→ 备用标识
 
 ### 注意事项
 1. **同文件覆盖** — 同一BV号多次转录覆盖旧文件，已处理列表防重复
@@ -217,7 +239,7 @@ GET https://api.bilibili.com/x/v3/fav/resource/list?media_id={ID}&ps=20&pn=1
 4. **Whisper 耗时** — GPU模式约实时 0.3x-0.5x 倍速，CPU模式约实时 0.5x-2x 倍速（依模型大小）
 5. **虚拟环境** — 所有 Python 脚本需在 `.venv` 中运行：`.venv/bin/python3 scripts/xxx.py`；`bilibili_transcript.sh` 会自动检测并提示安装
 6. **B站API ps上限20** — 超过需分页
-7. **摘要占位符必须替换** — 设置 `OPENAI_API_KEY` 环境变量可自动生成摘要
+7. **AI摘要自动生成** — 设置 `OPENAI_API_KEY`（或 `.env` 文件），转录完成后自动生成结构化摘要；未设置则保留占位符待 Agent 手动处理
 8. **只干自己的事** — 转录只输出文件。索引是 knowledge-rag 的事情
 9. **输出目录** — 自 v3.0 起按视频发布年月自动组织目录（如 `bilibili/2026/06/`）
 

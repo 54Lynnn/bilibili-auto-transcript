@@ -29,7 +29,7 @@ v5.0 从 Qwen3-ASR 换回了 Whisper 作为本地语音转文字引擎。原因�
 # 1. 安装依赖（首次）
 cd ~/.openclaw/workspace/skills/bilibili-auto-transcript
 python3 -m venv .venv
-.venv/bin/pip install openai-whisper requests
+.venv/bin/pip install openai-whisper requests python-dotenv
 
 # 2. 手动转录单个视频
 bash scripts/bilibili_transcript.sh "https://www.bilibili.com/video/BVxxxxx/"
@@ -44,23 +44,31 @@ bash scripts/bilibili_transcript.sh "https://www.bilibili.com/video/BVxxxxx/"
 - ffmpeg — 音频处理
 - `openai-whisper` — 本地语音转文字引擎（通过 `.venv/bin/pip install openai-whisper` 安装）
 - `requests` — HTTP 请求（批量转录用）
+- `python-dotenv` — 加载 `.env` 文件（通过 `.venv/bin/pip install python-dotenv` 安装）
 - opencc — 繁转简（可选）
 - chromium-browser — Cookie支持（B站AI字幕）
 
 ## 配置
 
-1. 编辑 `scripts/bilibili_scanner.py`，设置 `FAV_MEDIA_ID` 为你的B站收藏夹ID
+1. `cp .env.example .env`，编辑 `.env` 设置 `FAV_MEDIA_ID`（收藏夹ID）和 `OPENAI_API_KEY`（AI摘要）
 2. 用 chromium-browser 登录 bilibili.com 获取 Cookie
-3. （可选）设置 `OPENAI_API_KEY` 环境变量开启自动摘要
+3. 支持任何 OpenAI 兼容 API（DeepSeek、OpenCode Go、OpenRouter 等）
 
 ## 项目结构
 
 ```
 bilibili-auto-transcript/
 ├── SKILL.md                    # Skill 元数据
+├── .env                        # API密钥（不提交git）
+├── .env.example                # 配置模板（提交git，供朋友参考）
+├── .db/                        # SQLite 数据库（不提交git）
+│   └── transcripts.db          # 转录记录+摘要数据库
 ├── scripts/
 │   ├── bilibili_scanner.py     # 收藏夹扫描
 │   ├── bilibili_transcript.sh  # 核心转录引擎（v5.0，Whisper）
+│   ├── generate_summary.py     # AI摘要生成器（三种模式统一调用）
+│   ├── transcript_db.py        # SQLite 数据库管理层
+│   ├── fill_summaries.py       # 批量补摘要（cronjob推荐）
 │   ├── qwen3_transcribe.py     # （保留）Qwen3-ASR 可选替代
 │   └── batch_transcribe.py     # 批量转录调度
 └── references/

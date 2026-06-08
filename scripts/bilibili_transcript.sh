@@ -62,10 +62,16 @@ case "$BROWSER_TYPE" in
 esac
 
 if [ ${#COOKIE_ARGS[@]} -eq 0 ]; then
+    # WSL 环境
     detect_cookie "chromium" "$HOME/snap/chromium/common/chromium" "WSL Chromium" || \
     { WIN_USER=$(ls /mnt/c/Users/ 2>/dev/null | grep -v "Public\|Default\|All Users" | head -1); \
       [ -n "$WIN_USER" ] && detect_cookie "edge" "C:/Users/$WIN_USER/AppData/Local/Microsoft/Edge/User Data" "Windows Edge"; } || \
-    detect_cookie "firefox" "$HOME/snap/firefox/common/.mozilla/firefox" "WSL Firefox" || true
+    detect_cookie "firefox" "$HOME/snap/firefox/common/.mozilla/firefox" "WSL Firefox" || \
+    # 原生 Linux
+    detect_cookie "chromium" "$HOME/.config/chromium" "Chromium" || \
+    detect_cookie "chrome" "$HOME/.config/google-chrome" "Chrome" || \
+    detect_cookie "firefox" "$HOME/.mozilla/firefox" "Firefox" || \
+    detect_cookie "brave" "$HOME/.config/BraveSoftware/Brave-Browser" "Brave" || true
 fi
 
 if [ ${#COOKIE_ARGS[@]} -eq 0 ]; then
@@ -185,6 +191,11 @@ if [ -z "$TRANSCRIPT_TEXT" ]; then
     done
 fi
 
+# ===== 初始化 Python 和脚本路径（Whisper 和后续 DB 操作都需要） =====
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PY_BIN="$SCRIPT_DIR/../.venv/bin/python3"
+[ -x "$PY_BIN" ] || PY_BIN="python3"
+
 # 第3级：Whisper 本地语音转文字
 # 有独显且显存≥6GB → medium；有独显但显存<6GB → small
 # 无独显且视频≤30分钟 → base；无独显且视频>30分钟 → tiny
@@ -195,14 +206,15 @@ if [ -z "$TRANSCRIPT_TEXT" ]; then
     # 检测 CUDA 可用性
     HAS_CUDA=false
     GPU_VRAM_MB=0
-    if python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+    if "$PY_BIN" -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
         HAS_CUDA=true
-        GPU_NAME=$(python3 -c "import torch; print(torch.cuda.get_device_name(0))" 2>/dev/null)
+        GPU_NAME=$("$PY_BIN" -c "import torch; print(torch.cuda.get_device_name(0))" 2>/dev/null)
         echo "   ✅ GPU加速可用（CUDA）"
         echo "   🖥️  GPU: $GPU_NAME"
         # 检测显存
         if command -v nvidia-smi &>/dev/null; then
-            GPU_VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)
+            GPU_VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9')
+            GPU_VRAM_MB=${GPU_VRAM_MB:-0}
             echo "   💾 显存: ${GPU_VRAM_MB}MB"
         fi
     fi
@@ -229,16 +241,19 @@ if [ -z "$TRANSCRIPT_TEXT" ]; then
         echo "   ✅ 音频已优化"
     fi
 
-    # 检查 Whisper 是否安装
-    if ! command -v whisper &>/dev/null; then
-        echo "❌ Whisper 未安装，请运行: pip install openai-whisper"
+    # 检查 Whisper 是否安装（优先用 venv 中的）
+    WHISPER_BIN="$SCRIPT_DIR/../.venv/bin/whisper"
+    [ -x "$WHISPER_BIN" ] || WHISPER_BIN="whisper"
+    if ! command -v "$WHISPER_BIN" &>/dev/null; then
+        echo "❌ Whisper 未安装，请运行: $SCRIPT_DIR/../.venv/bin/pip install openai-whisper"
         exit 1
     fi
 
     # 根据 GPU/显存选择 Whisper 模型
     #   GPU+显存≥6GB → medium | GPU+显存<6GB → small
     #   CPU+≤30分钟 → base     | CPU+>30分钟 → tiny
-    DURATION_INT=${DURATION_SEC:-0}
+    DURATION_INT=${DURATION_SEC%%.*}
+    DURATION_INT=${DURATION_INT:-0}
     WHISPER_MODEL="base"
     if [ "$HAS_CUDA" = true ] && [ "$GPU_VRAM_MB" -ge 6144 ]; then
         WHISPER_MODEL="medium"
@@ -256,7 +271,7 @@ if [ -z "$TRANSCRIPT_TEXT" ]; then
 
     # 检测视频语言（判断是否为中文内容）
     WHISPER_LANG=""
-    if echo "$TITLE" | python3 -c "import sys; s=sys.stdin.read(); sys.exit(0 if any('\u4e00'<=c<='\u9fff' for c in s) else 1)"; then
+    if echo "$TITLE" | "$PY_BIN" -c "import sys; s=sys.stdin.read(); sys.exit(0 if any('\u4e00'<=c<='\u9fff' for c in s) else 1)"; then
         WHISPER_LANG="zh"
         echo "   🌐 检测到中文标题，指定 --language zh 提高准确率"
     fi
@@ -268,7 +283,7 @@ if [ -z "$TRANSCRIPT_TEXT" ]; then
     fi
 
     echo "   🎤 开始语音转文字（模型: $WHISPER_MODEL）..."
-    whisper "${WHISPER_ARGS[@]}" 2>&1
+    "$WHISPER_BIN" "${WHISPER_ARGS[@]}" 2>&1
 
     TXT_FILE="${OUTPUT_DIR}/bilibili_audio.txt"
     if [ ! -f "$TXT_FILE" ]; then
@@ -307,43 +322,74 @@ if [ -n "$PUB_YEAR" ] && [ "$PUB_YEAR" != "未知时间" ]; then
     mkdir -p "$OUTPUT_DIR"
 fi
 
-SAFE_TITLE=$(echo "$TITLE" | python3 -c "import sys, re; s=sys.stdin.read().strip(); s=re.sub(r'[\\\\/:*?\"<>|]', '', s); s=re.sub(r'[\\s\\W]+', '-', s); s=re.sub(r'-+', '-', s).strip('-'); print(s[:60] or 'untitled')")
-AUTHOR_SAFE=$(echo "$AUTHOR" | python3 -c "import sys, re; s=sys.stdin.read().strip(); s=re.sub(r'[\\\\/:*?\"<>|]', '', s); s=re.sub(r'[\\s\\W]+', '-', s); s=re.sub(r'-+', '-', s).strip('-'); print(s[:30] or 'unknown')")
-OUTPUT_FILE="${OUTPUT_DIR}/${SAFE_TITLE}_${AUTHOR_SAFE}_${UPLOAD_DATE_FORMATTED}_${VIDEO_ID}.txt"
+echo "📝 正在写入数据库..."
 
-echo "📝 正在生成转录文件..."
+# ===== 第一步：写入SQLite（DB是数据源） =====
+BVID=$(echo "$VIDEO_URL" | grep -oP 'BV[a-zA-Z0-9]+' | head -1)
+if [ -n "$BVID" ]; then
+    # 将元数据写入临时 JSON 文件（避免 shell 字符串拼接导致注入）
+    META_JSON=$(mktemp /tmp/bili_meta_XXXXXX.json)
+    "$PY_BIN" -c "
+import json, sys
+data = {
+    'bvid': sys.argv[1], 'url': sys.argv[2],
+    'title': sys.argv[3], 'author': sys.argv[4],
+    'duration': sys.argv[5], 'upload_date': sys.argv[6],
+    'transcript_source': sys.argv[7]
+}
+with open(sys.argv[8], 'w', encoding='utf-8') as f:
+    json.dump(data, f, ensure_ascii=False)
+" "$BVID" "$VIDEO_URL" "$TITLE" "$AUTHOR" "$DURATION" "$UPLOAD_DATE_FORMATTED" "$TRANSCRIPT_SOURCE" "$META_JSON" 2>/dev/null
 
-cat > "$OUTPUT_FILE" << EOF
-================================================================================
-B站视频转录文档
-================================================================================
+    # 读取 JSON 并写入 DB（全文通过 stdin 传入）
+    "$PY_BIN" -c "
+import sys, json; sys.path.insert(0, '$SCRIPT_DIR')
+from transcript_db import TranscriptDB
+with open('$META_JSON') as f:
+    meta = json.load(f)
+text = sys.stdin.read()
+with TranscriptDB() as db:
+    db.insert(
+        bvid=meta['bvid'], url=meta['url'],
+        title=meta['title'], author=meta['author'],
+        duration=meta['duration'], upload_date=meta['upload_date'],
+        transcript_source=meta['transcript_source'],
+        transcript_file='', transcript_text=text, status='transcribed'
+    )
+    print('📝 已写入数据库')
+" <<< "$TRANSCRIPT_TEXT_SIMPLIFIED" 2>&1
+    rm -f "$META_JSON"
+fi
 
-📹 视频标题：$TITLE
-🔗 B站链接：$VIDEO_URL
-👤 作者：$AUTHOR
-📅 发布时间：$UPLOAD_DATE_FORMATTED
-⏱️  视频时长：$DURATION
-📝 转录来源：$TRANSCRIPT_SOURCE
-⏰ 转录时间：$(date '+%Y-%m-%d %H:%M:%S')
+# ===== 第二步：生成AI摘要（有API key时，从DB读取） =====
+if [ -n "$OPENAI_API_KEY" ] || [ -f "$SCRIPT_DIR/../.env" ]; then
+    echo ""
+    echo "🤖 正在生成AI摘要..."
+    if [ -f "$SCRIPT_DIR/../.env" ]; then
+        set -a; . "$SCRIPT_DIR/../.env" 2>/dev/null || true; set +a
+    fi
+    if [ -n "$BVID" ]; then
+        "$PY_BIN" "$SCRIPT_DIR/generate_summary.py" --bvid "$BVID" 2>&1
+    fi
+fi
 
-================================================================================
-第一部分：视频摘要（AI生成）
-================================================================================
-
-【AI待处理：请阅读全文后，替换此行，写结构化摘要】
-
-================================================================================
-第二部分：完整原文
-================================================================================
-
-$TRANSCRIPT_TEXT_SIMPLIFIED
-
-================================================================================
-文档结束
-================================================================================
-EOF
+# ===== 第三步：从DB渲染TXT（TXT是展示层） =====
+if [ -n "$BVID" ]; then
+    RENDERED=$("$PY_BIN" -c "
+import sys; sys.path.insert(0, '$SCRIPT_DIR')
+from transcript_db import TranscriptDB
+with TranscriptDB() as db:
+    path = db.render_txt('$BVID')
+    if path: print(path)
+" 2>/dev/null)
+    [ -n "$RENDERED" ] && OUTPUT_FILE="$RENDERED"
+fi
 
 echo ""
 echo "✅ 转录完成！"
-echo "📄 文件已保存: $OUTPUT_FILE"
-echo "$OUTPUT_FILE"
+if [ -n "$OUTPUT_FILE" ]; then
+    echo "📄 文件已保存: $OUTPUT_FILE"
+    echo "$OUTPUT_FILE"
+else
+    echo "📄 转录全文已写入数据库"
+fi
