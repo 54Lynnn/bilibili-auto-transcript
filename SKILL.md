@@ -1,6 +1,6 @@
 ---
 name: bilibili-auto-transcript
-version: "5.0.0"
+version: "5.1.0"
 description: "B站视频转录+收藏夹扫描。三级降级（CC→AI→Whisper），AI摘要生成。"
 homepage: https://clawhub.ai/54lynnn/bilibili-transcript
 metadata:
