@@ -1,8 +1,8 @@
 #!/bin/bash
-# B站视频字幕智能获取脚本 v5.0
+# B站视频字幕智能获取脚本 v5.1
 # 功能：CC字幕 → AI字幕 → Whisper 转录（三级降级）
 # 支持：WSL Chromium/Edge Cookie、多语言AI字幕、GPU加速、音频优化
-# v5.0 回归：Whisper 替换 Qwen3-ASR 作为默认本地转录引擎，智能模型选择
+# v5.1 修复：Cookie检测逻辑（检查前5行输出避免版本警告干扰）
 
 VIDEO_URL="$1"
 OUTPUT_DIR="${2:-$HOME/workspace/knowledge/bilibili}"
@@ -49,7 +49,7 @@ detect_cookie() {
     local label="$3"
     if [ -d "$path" ]; then
         local test_out
-        test_out=$(yt-dlp --list-subs --cookies-from-browser "$browser:$path" "$VIDEO_URL" 2>&1 | head -1)
+        test_out=$(yt-dlp --list-subs --cookies-from-browser "$browser:$path" "$VIDEO_URL" 2>&1 | head -5)
         if echo "$test_out" | grep -q "Extracting"; then
             echo "   ✅ 使用 $label Cookie"
             COOKIE_ARGS=(--cookies-from-browser "$browser:$path")

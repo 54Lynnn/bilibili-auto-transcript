@@ -1,6 +1,6 @@
 ---
 name: bilibili-auto-transcript
-version: "5.1.0"
+version: "5.2.0"
 description: "B站视频转录+收藏夹扫描。三级降级（CC→AI→Whisper），AI摘要生成。"
 homepage: https://clawhub.ai/54lynnn/bilibili-transcript
 metadata:
@@ -95,6 +95,7 @@ v4.x 引入了 Qwen3-ASR 作为本地转录引擎，v5.0 换回了 Whisper。核
 - **转录报告** — 生成 CSV 报告，含来源分布统计
 - **AI摘要** — 有 API key 时自动生成（三种模式统一调用 `scripts/generate_summary.py`）
 - **目录组织** — 按视频发布年月自动分目录存储
+- **标题校验** — 转录完成后自动对比B站最新标题，UP主改标题时自动修正
 
 ### 首次设置
 

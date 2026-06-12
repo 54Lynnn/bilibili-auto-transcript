@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-批量转录 B站收藏夹中的所有新视频 v2.0
+批量转录 B站收藏夹中的所有新视频 v2.1
 功能：
   - 自动扫描收藏夹所有视频（含分页）
   - 支持断点续传（已处理视频自动跳过）
@@ -30,6 +30,65 @@ from transcript_db import TranscriptDB
 from logger import log, info, success, warn, error as log_error
 SCANNER = os.path.join(SKILL_DIR, "scripts", "bilibili_scanner.py")
 TRANSCRIPT_SH = os.path.join(SKILL_DIR, "scripts", "bilibili_transcript.sh")
+FAV_MEDIA_ID = os.environ.get("FAV_MEDIA_ID", "")
+
+
+import requests as _requests
+
+
+def fetch_latest_titles(media_id: str) -> dict:
+    """从收藏夹API获取所有视频的最新标题，返回 {bvid: title}"""
+    if not media_id:
+        return {}
+    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com"}
+    titles = {}
+    page = 1
+    while True:
+        url = f"https://api.bilibili.com/x/v3/fav/resource/list?media_id={media_id}&ps=20&pn={page}"
+        try:
+            resp = _requests.get(url, headers=headers, timeout=15)
+            data = resp.json()
+            if data.get("code") != 0:
+                break
+            medias = data.get("data", {}).get("medias", [])
+            if not medias:
+                break
+            for item in medias:
+                bvid = item.get("bvid", "")
+                title = item.get("title", "")
+                if bvid and title:
+                    titles[bvid] = title
+            if data.get("data", {}).get("has_more") is False:
+                break
+            page += 1
+        except Exception:
+            break
+    return titles
+
+
+def verify_and_fix_titles():
+    """校验数据库中的标题与B站最新标题是否一致，不一致则修正"""
+    latest = fetch_latest_titles(FAV_MEDIA_ID)
+    if not latest:
+        print("⚠️ 无法获取收藏夹最新标题，跳过校验")
+        return 0
+
+    fixed = 0
+    try:
+        with TranscriptDB() as db:
+            rows = db.conn.execute("SELECT bvid, title FROM transcripts").fetchall()
+            for row in rows:
+                bvid = row["bvid"]
+                db_title = row["title"]
+                api_title = latest.get(bvid)
+                if api_title and api_title != db_title:
+                    db.conn.execute("UPDATE transcripts SET title = ? WHERE bvid = ?", (api_title, bvid))
+                    db.conn.commit()
+                    print(f"   🔧 标题修正: {db_title} → {api_title}")
+                    fixed += 1
+    except Exception as e:
+        print(f"⚠️ 标题校验出错: {e}")
+    return fixed
 STATE_DIR = os.path.expanduser("~/.openclaw/workspace/.auto-transcript-state")
 PROCESSED_FILE = os.path.join(STATE_DIR, "processed_videos.txt")
 REPORT_FILE = os.path.join(STATE_DIR, "transcript_report.csv")
@@ -279,6 +338,14 @@ def main():
         for row in report_rows:
             if row["status"] != "success":
                 print(f"      - {row['bvid']} {row['title']}")
+
+    # 标题校验：对比B站最新标题，自动修正
+    print(f"\n🔍 校验标题一致性...")
+    fixed_titles = verify_and_fix_titles()
+    if fixed_titles:
+        print(f"   🔧 修正了 {fixed_titles} 条标题")
+    else:
+        print(f"   ✅ 所有标题一致")
 
     return 0 if fail_count == 0 else 1
 
