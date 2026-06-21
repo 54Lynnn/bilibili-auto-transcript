@@ -80,3 +80,7 @@ bilibili-auto-transcript/
 ## 许可
 
 MIT
+
+## Download History
+
+[![Download History](https://skill-history.com/chart/54lynnn/bilibili-auto-transcript.svg)](https://skill-history.com/54lynnn/bilibili-auto-transcript)
